@@ -1,5 +1,5 @@
 #include <stdio.h>
-
+#include <stdlib.h>
 #include <libbacnet/address.h>
 #include <libbacnet/device.h>
 #include <libbacnet/handlers.h>
@@ -10,8 +10,15 @@
 #include <libbacnet/tsm.h>
 #include <libbacnet/ai.h>
 #include "bacnet_namespace.h"
+#include <string.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <modbus-tcp.h>
+#include <errno.h>
 
-#define BACNET_INSTANCE_NO	    12
+#define BACNET_INSTANCE_NO	    12 
+// Use 12 initial tests, 48 for VU testing (random_data folder)
+
 #define BACNET_PORT		    0xBAC1
 #define BACNET_INTERFACE	    "lo"
 #define BACNET_DATALINK_TYPE	    "bvlc"
@@ -21,24 +28,29 @@
 
 #if RUN_AS_BBMD_CLIENT
 #define BACNET_BBMD_PORT	    0xBAC0
-#define BACNET_BBMD_ADDRESS	    "127.0.0.1"
+
+#define BACNET_BBMD_ADDRESS	    "140.159.160.7" 
+// Initially 127.0.0.1, change to 140.159.160.7 for VU
+
 #define BACNET_BBMD_TTL		    90
 #endif
 
-/* If you are trying out the test suite from home, this data matches the data
- * stored in RANDOM_DATA_POOL for device number 12
- * BACnet client will print "Successful match" whenever it is able to receive
- * this set of data. Note that you will not have access to the RANDOM_DATA_POOL
- * for your final submitted application. */
-static uint16_t test_data[] = {
-    0xA4EC, 0x6E39, 0x8740, 0x1065, 0x9134, 0xFC8C };
+static uint16_t test_data[] = 
+{
+    0xA4EC, 0x6E39, 0x8740, 0x1065, 0x9134, 0xFC8C
+};
+// Need this to change to read the incoming data itself, not read pre made data.
+
+
 #define NUM_TEST_DATA (sizeof(test_data)/sizeof(test_data[0]))
 
 static pthread_mutex_t timer_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t list_data_ready = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t list_flush = PTHREAD_COND_INITIALIZER;
 
 static int Update_Analog_Input_Read_Property(
-		BACNET_READ_PROPERTY_DATA *rpdata) {
-
+		BACNET_READ_PROPERTY_DATA *rpdata) 
+{
     static int index;
     int instance_no = bacnet_Analog_Input_Instance_To_Index(
 			rpdata->object_instance);
@@ -60,8 +72,7 @@ static int Update_Analog_Input_Read_Property(
     /* bacnet_Analog_Input_Present_Value_Set(2, test_data[index++]); */
     
     if (index == NUM_TEST_DATA) index = 0;
-
-not_pv:
+    not_pv:
     return bacnet_Analog_Input_Read_Property(rpdata);
 }
 
@@ -100,18 +111,21 @@ static bacnet_object_functions_t server_objects[] = {
     {MAX_BACNET_OBJECT_TYPE}
 };
 
-static void register_with_bbmd(void) {
-#if RUN_AS_BBMD_CLIENT
+static void register_with_bbmd(void) 
+{
+    #if RUN_AS_BBMD_CLIENT
     /* Thread safety: Shares data with datalink_send_pdu */
     bacnet_bvlc_register_with_bbmd(
-	    bacnet_bip_getaddrbyname(BACNET_BBMD_ADDRESS), 
-	    htons(BACNET_BBMD_PORT),
-	    BACNET_BBMD_TTL);
-#endif
+    bacnet_bip_getaddrbyname(BACNET_BBMD_ADDRESS), 
+    htons(BACNET_BBMD_PORT),
+    BACNET_BBMD_TTL);
+    #endif
 }
 
-static void *minute_tick(void *arg) {
-    while (1) {
+static void *minute_tick(void *arg) 
+{
+    while (1) 
+    {
 	pthread_mutex_lock(&timer_lock);
 
 	/* Expire addresses once the TTL has expired */
@@ -128,11 +142,14 @@ static void *minute_tick(void *arg) {
 	pthread_mutex_unlock(&timer_lock);
 	sleep(60);
     }
+
     return arg;
 }
 
-static void *second_tick(void *arg) {
-    while (1) {
+static void *second_tick(void *arg) 
+{
+    while (1) 
+    {
 	pthread_mutex_lock(&timer_lock);
 
 	/* Invalidates stale BBMD foreign device table entries */
@@ -166,10 +183,12 @@ static void *second_tick(void *arg) {
 	pthread_mutex_unlock(&timer_lock);
 	sleep(1);
     }
+
     return arg;
 }
 
-static void ms_tick(void) {
+static void ms_tick(void) 
+{
     /* Updates change of value COV subscribers.
      * Required for SERVICE_CONFIRMED_SUBSCRIBE_COV
      * bacnet_handler_cov_task(); */
@@ -184,7 +203,8 @@ static void ms_tick(void) {
 		    SERVICE_CONFIRMED_##service,	\
 		    bacnet_handler_##handler)
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv) 
+{
     uint8_t rx_buf[bacnet_MAX_MPDU];
     uint16_t pdu_len;
     BACNET_ADDRESS src;
@@ -224,11 +244,13 @@ int main(int argc, char **argv) {
      *	    Store the register data into the tail of a linked list 
      */
 
-    while (1) {
+    while (1) 
+    {
 	pdu_len = bacnet_datalink_receive(
 		    &src, rx_buf, bacnet_MAX_MPDU, BACNET_SELECT_TIMEOUT_MS);
 
-	if (pdu_len) {
+	if (pdu_len) 
+	{
 	    /* May call any registered handler.
 	     * Thread safety: May block, however we still need to guarantee
 	     * atomicity with the timers, so hold the lock anyway */
