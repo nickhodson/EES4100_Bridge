@@ -1,0 +1,32 @@
+Victoria University EES4100 Test Suite
+
+This repository builds three applications:
+
+bacnet_client:
+    This application will continually poll for devices with subdirectories in
+    RANDOM_DATA_POOL. Once a device has been found, it will send a
+    Read_Property request to as many Analog_Input object instances as required
+    by the data in the device's RANDOM_DATA_POOL.
+
+    bacnet_client acts as a BBMD and expects register_with_bbmd requests.
+
+bacnet_server:
+    An incomplete implementation of a Modbus to BACnet bridge. (The modbus code
+    is missing completely). Use this as a basis for your project.
+
+    It is currently configured to send test_data (matching the data for device
+    12 in RANDOM_DATA_POOL) to demonstrate the matching requirements for
+    bacnet_client.
+
+modbus_server:
+    The Modbus server that expects connections from bacnet_server. It will
+    provide data as provided by RANDOM_DATA_POOL. The BACnet device number to
+    register number mapping is as follows:
+	
+	BACnet Side			Modbus Side
+
+	Device 12 AI Instance 0		Register 12
+	Device 12 AI Instance 1		Register 13
+	Device 12 AI Instance 2		Register 14
+	Device 120 AI Instance 0	Register 120 ...
+
