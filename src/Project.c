@@ -29,8 +29,8 @@
 #if RUN_AS_BBMD_CLIENT
 #define BACNET_BBMD_PORT	    0xBAC0
 
-#define BACNET_BBMD_ADDRESS	    "127.0.0.1" 
-//#define BACNET_BBMD_ADDRESS	    "140.159.160.7" 
+//#define BACNET_BBMD_ADDRESS	    "127.0.0.1" 
+#define BACNET_BBMD_ADDRESS	    "140.159.160.7" 
 // Initially 127.0.0.1, change to 140.159.160.7 for VU
 
 #define BACNET_BBMD_TTL		    90
@@ -47,6 +47,8 @@ static pthread_mutex_t timer_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t list_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t list_data_ready = PTHREAD_COND_INITIALIZER; // added for when link list is installed
 static pthread_cond_t list_data_flush = PTHREAD_COND_INITIALIZER;  // added for when link list is installed
+
+uint16_t thread_display[3] ={};
 
 typedef struct s_word_object word_object;
 struct s_word_object
@@ -102,16 +104,27 @@ static word_object *list_get_first(word_object **list_head)
 static int Update_Analog_Input_Read_Property(BACNET_READ_PROPERTY_DATA *rpdata) 
 {
     static int index;
-    int instance_no = bacnet_Analog_Input_Instance_To_Index(rpdata->object_instance);
+    word_object *object;
+    int instance_no = Analog_Input_Instance_To_Index(rpdata -> object_instance);
 
-	if (rpdata->object_property != bacnet_PROP_PRESENT_VALUE) 
+	if(rpdata->object_property != bacnet_PROP_PRESENT_VALUE) 
 	{
+		pthread_mutex_lock(&list_lock);
     		goto not_pv;
 	}
 
-    printf("AI_Present_Value request for instance %i\n", instance_no);
-    	bacnet_Analog_Input_Present_Value_Set(0, 20);
-// list_get_first	
+	if(list_head[instance_no] == NULL)
+	{
+		pthread_mutex_unlock(&list_lock);
+		goto not_pv;
+	}
+	
+	object = list_get_first(&list_head[instance_no]);
+	printf("AI_Present_Value request for instance %i\n", instance_no);
+    	thread_display[instance_no] = object -> value;
+	//bacnet_Analog_Input_Present_Value_Set(0, 20);
+	free(object);
+	bacnet_Analog_Input_Present_Value_Set(instance_no, thread_display[instance_no]);
 	not_pv:
 	return bacnet_Analog_Input_Read_Property(rpdata);
 }
@@ -251,8 +264,8 @@ static void *modbus_side (void *arg) //_________________________________________
 	int i;
 modbus_side_restart:
 	
-	ctx = modbus_new_tcp("127.0.0.1", 502);
-	//ctx = modbus_new_tcp("140.159.153.159", 502);
+	//ctx = modbus_new_tcp("127.0.0.1", 502);
+	ctx = modbus_new_tcp("140.159.153.159", 502);
 	// Use 140.159.153.159 for uni, 127.0.0.1 for home. Server port remains as 502 for both cases
 	
 	// Initialize connection to modbus server
