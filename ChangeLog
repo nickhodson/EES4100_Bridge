@@ -1,5 +1,12 @@
+21/10/15 6:30pm
+
+- Added link list functionality to Project.c
+- "Project" is still not working fully, however, link list is almost ready for final testing
+
+
 21/10/15 1:00pm
 
 - Changed name of project file from "bacnet_server.c" to "Project.c"
 - Makefiles, bootstrap, common etc. now set up for "Project.c" file
+
 

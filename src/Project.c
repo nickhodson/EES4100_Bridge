@@ -16,7 +16,7 @@
 #include <modbus-tcp.h>
 #include <errno.h>
 
-#define BACNET_INSTANCE_NO	    12 
+#define BACNET_INSTANCE_NO	    48 
 // Use 12 initial tests, 48 for VU testing (random_data folder)
 
 #define BACNET_PORT		    0xBAC1
@@ -29,51 +29,91 @@
 #if RUN_AS_BBMD_CLIENT
 #define BACNET_BBMD_PORT	    0xBAC0
 
-#define BACNET_BBMD_ADDRESS	    "140.159.160.7" 
+#define BACNET_BBMD_ADDRESS	    "127.0.0.1" 
+//#define BACNET_BBMD_ADDRESS	    "140.159.160.7" 
 // Initially 127.0.0.1, change to 140.159.160.7 for VU
 
 #define BACNET_BBMD_TTL		    90
 #endif
 
-static uint16_t test_data[] = 
+/*static uint16_t test_data[] = 
 {
     0xA4EC, 0x6E39, 0x8740, 0x1065, 0x9134, 0xFC8C
-};
+};*/
 // Need this to change to read the incoming data itself, not read pre made data.
 
 
-#define NUM_TEST_DATA (sizeof(test_data)/sizeof(test_data[0]))
-
 static pthread_mutex_t timer_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t list_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t list_data_ready = PTHREAD_COND_INITIALIZER; // added for when link list is installed
-static pthread_cond_t list_flush = PTHREAD_COND_INITIALIZER;  // added for when link list is installed
+static pthread_cond_t list_data_flush = PTHREAD_COND_INITIALIZER;  // added for when link list is installed
 
-static int Update_Analog_Input_Read_Property(
-		BACNET_READ_PROPERTY_DATA *rpdata) 
+typedef struct s_word_object word_object;
+struct s_word_object
+{
+	uint16_t value;
+	word_object *next;
+};
+
+static word_object *list_head[2];
+
+/* Add object to list */
+static void add_to_list(word_object **list_head, uint16_t value) 
+{
+	word_object *last_object, *tmp_object;
+	/* Do all memory allocation outside of locking - strdup() and malloc() can block */
+	tmp_object = malloc(sizeof(word_object));
+	/* Set up tmp_object outside of locking */
+	tmp_object -> value = value;
+	tmp_object -> next = NULL;
+	pthread_mutex_lock(&list_lock);
+	
+	if (*list_head == NULL) 
+	{
+		/* The list is empty, just place our tmp_object at the head */
+		*list_head = tmp_object;
+	} 
+	
+	else 
+	{
+		/* Iterate through the linked list to find the last object */
+		last_object = *list_head;
+	
+		while (last_object->next) 
+		{
+			last_object = last_object->next;
+		}
+
+		/* Last object is now found, link in our tmp_object at the tail */
+		last_object->next = tmp_object;
+	}
+	pthread_mutex_unlock(&list_lock);
+	pthread_cond_signal(&list_data_ready);
+}
+
+static word_object *list_get_first(word_object **list_head) 
+{
+	word_object *first_object;
+	first_object = *list_head;
+	*list_head = (*list_head) -> next;
+	return first_object;
+}
+
+static int Update_Analog_Input_Read_Property(BACNET_READ_PROPERTY_DATA *rpdata) 
 {
     static int index;
-    int instance_no = bacnet_Analog_Input_Instance_To_Index(
-			rpdata->object_instance);
+    int instance_no = bacnet_Analog_Input_Instance_To_Index(rpdata->object_instance);
 
-    if (rpdata->object_property != bacnet_PROP_PRESENT_VALUE) goto not_pv;
+	if (rpdata->object_property != bacnet_PROP_PRESENT_VALUE) 
+	{
+    		goto not_pv;
+	}
 
     printf("AI_Present_Value request for instance %i\n", instance_no);
-    /* Update the values to be sent to the BACnet client here.
-     * The data should be read from the head of a linked list. You are required
-     * to implement this list functionality.
-     *
-     * bacnet_Analog_Input_Present_Value_Set() 
-     *     First argument: Instance No
-     *     Second argument: data to be sent
-     *
-     * Without reconfiguring libbacnet, a maximum of 4 values may be sent */
-    bacnet_Analog_Input_Present_Value_Set(0, test_data[index++]);
-    /* bacnet_Analog_Input_Present_Value_Set(1, test_data[index++]); */
-    /* bacnet_Analog_Input_Present_Value_Set(2, test_data[index++]); */
-    
-    if (index == NUM_TEST_DATA) index = 0;
-    not_pv:
-    return bacnet_Analog_Input_Read_Property(rpdata);
+    	bacnet_Analog_Input_Present_Value_Set(0, 20);
+// list_get_first	
+	not_pv:
+	return bacnet_Analog_Input_Read_Property(rpdata);
 }
 
 static bacnet_object_functions_t server_objects[] = {
@@ -203,7 +243,7 @@ static void ms_tick(void)
 		    SERVICE_CONFIRMED_##service,	\
 		    bacnet_handler_##handler)
 
-static void *modbus_side (void *arg)
+static void *modbus_side (void *arg) //_______________________________________________________________________static void *modbus_side (void *arg)
 {
 	modbus_t *ctx;
 	uint16_t tab_reg[64];
@@ -211,15 +251,15 @@ static void *modbus_side (void *arg)
 	int i;
 modbus_side_restart:
 	
-	ctx = modbus_new_tcp("140.159.153.159", 502);
+	ctx = modbus_new_tcp("127.0.0.1", 502);
+	//ctx = modbus_new_tcp("140.159.153.159", 502);
 	// Use 140.159.153.159 for uni, 127.0.0.1 for home. Server port remains as 502 for both cases
 	
 	// Initialize connection to modbus server
 	if(modbus_connect(ctx) == -1)  // Connection to server failed
 	{
 		fprintf(stderr, "Connection to server failed: %s\n", modbus_strerror(errno));
-		modbus_free(ctx);
-		// close modbus server connection 
+		modbus_free(ctx); 
 		modbus_close(ctx);
 		usleep(100000);  // Sleep for suggested delay time of 100ms
 		// Closing connection to retry again
@@ -241,25 +281,24 @@ modbus_side_restart:
 		{
 			fprintf(stderr, "Reading of registers has failed: %s\n", modbus_strerror(errno));
 
-		modbus_free(ctx);
-		// close modbus server connection 
+		// CLose modbus connection and start again (retry)
+		modbus_free(ctx); 
 		modbus_close(ctx);
-		// Closing connection to retry again
 		goto modbus_side_restart;
-			goto modbus_side_restart;
 		}
 
 		// not putting an else statement for succcessful read register as it will clog up the terminal window
 
-		for(i=0; i < rc; i++)  // Register display
+		for(i = 0; i < rc; i++)  // Register display
 		{
+			add_to_list(&list_head[i], tab_reg[i]);  // replacement for printf statement
 			printf("register[%d] = %d (0x%X)\n", i, tab_reg[i], tab_reg[i]);
 		}	
 		usleep(100000);  // Sleep for suggested delay time of 100ms
 	}
 }	
 
-int main(int argc, char **argv) 
+int main(int argc, char **argv) //_____________________________________________________________________int main(int argc, char **argv)
 {
     uint8_t rx_buf[bacnet_MAX_MPDU];
     uint16_t pdu_len;
@@ -288,18 +327,6 @@ int main(int argc, char **argv)
     pthread_create(&minute_tick_id, 0, minute_tick, NULL);  // Create thread for minute_tick function
     pthread_create(&second_tick_id, 0, second_tick, NULL);  // Create thread for second_tick function
     pthread_create(&modbus_side_id, 0, modbus_side, NULL);  // Create thread for modbus_side function 
-
-    /* Start another thread here to retrieve your allocated registers from the
-     * modbus server. This thread should have the following structure (in a
-     * separate function):
-     *
-     * Initialise:
-     *	    Connect to the modbus server
-     *
-     * Loop:
-     *	    Read the required number of registers from the modbus server
-     *	    Store the register data into the tail of a linked list 
-     */
 
     while (1) 
     {
