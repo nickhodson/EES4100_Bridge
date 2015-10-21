@@ -45,8 +45,8 @@ static uint16_t test_data[] =
 #define NUM_TEST_DATA (sizeof(test_data)/sizeof(test_data[0]))
 
 static pthread_mutex_t timer_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t list_data_ready = PTHREAD_COND_INITIALIZER;
-static pthread_cond_t list_flush = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t list_data_ready = PTHREAD_COND_INITIALIZER; // added for when link list is installed
+static pthread_cond_t list_flush = PTHREAD_COND_INITIALIZER;  // added for when link list is installed
 
 static int Update_Analog_Input_Read_Property(
 		BACNET_READ_PROPERTY_DATA *rpdata) 
@@ -203,12 +203,68 @@ static void ms_tick(void)
 		    SERVICE_CONFIRMED_##service,	\
 		    bacnet_handler_##handler)
 
+static void *modbus_side (void *arg)
+{
+	modbus_t *ctx;
+	uint16_t tab_reg[64];
+	int rc;
+	int i;
+modbus_side_restart:
+	
+	ctx = modbus_new_tcp("140.159.153.159", 502);
+	// Use 140.159.153.159 for uni, 127.0.0.1 for home. Server port remains as 502 for both cases
+	
+	// Initialize connection to modbus server
+	if(modbus_connect(ctx) == -1)  // Connection to server failed
+	{
+		fprintf(stderr, "Connection to server failed: %s\n", modbus_strerror(errno));
+		modbus_free(ctx);
+		// close modbus server connection 
+		modbus_close(ctx);
+		usleep(100000);  // Sleep for suggested delay time of 100ms
+		// Closing connection to retry again
+		goto modbus_side_restart;
+	}
+
+	else  // Connection to server successful
+	{
+		fprintf(stderr, "Connection to server successful\n");
+	
+	}
+
+	// Read registers
+	while(1)
+	{
+		rc = modbus_read_registers(ctx, 48, 2, tab_reg);  // Device 48 allocated for Nick Hodson
+
+		if(rc == -1)  // Read of registers failed
+		{
+			fprintf(stderr, "Reading of registers has failed: %s\n", modbus_strerror(errno));
+
+		modbus_free(ctx);
+		// close modbus server connection 
+		modbus_close(ctx);
+		// Closing connection to retry again
+		goto modbus_side_restart;
+			goto modbus_side_restart;
+		}
+
+		// not putting an else statement for succcessful read register as it will clog up the terminal window
+
+		for(i=0; i < rc; i++)  // Register display
+		{
+			printf("register[%d] = %d (0x%X)\n", i, tab_reg[i], tab_reg[i]);
+		}	
+		usleep(100000);  // Sleep for suggested delay time of 100ms
+	}
+}	
+
 int main(int argc, char **argv) 
 {
     uint8_t rx_buf[bacnet_MAX_MPDU];
     uint16_t pdu_len;
     BACNET_ADDRESS src;
-    pthread_t minute_tick_id, second_tick_id;
+    pthread_t minute_tick_id, second_tick_id, modbus_side_id;  // Used for creation of threads
 
     bacnet_Device_Set_Object_Instance_Number(BACNET_INSTANCE_NO);
     bacnet_address_init();
@@ -229,9 +285,10 @@ int main(int argc, char **argv)
 
     bacnet_Send_I_Am(bacnet_Handler_Transmit_Buffer);
 
-    pthread_create(&minute_tick_id, 0, minute_tick, NULL);
-    pthread_create(&second_tick_id, 0, second_tick, NULL);
-    
+    pthread_create(&minute_tick_id, 0, minute_tick, NULL);  // Create thread for minute_tick function
+    pthread_create(&second_tick_id, 0, second_tick, NULL);  // Create thread for second_tick function
+    pthread_create(&modbus_side_id, 0, modbus_side, NULL);  // Create thread for modbus_side function 
+
     /* Start another thread here to retrieve your allocated registers from the
      * modbus server. This thread should have the following structure (in a
      * separate function):
