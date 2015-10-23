@@ -40,7 +40,6 @@ static pthread_mutex_t list_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t list_data_ready = PTHREAD_COND_INITIALIZER; // added for when link list is installed
 static pthread_cond_t list_data_flush = PTHREAD_COND_INITIALIZER;  // added for when link list is installed
 
-uint16_t thread_display[3] ={};  // Display thread used to replace fprintf readout
 
 typedef struct s_word_object word_object;
 struct s_word_object
@@ -49,7 +48,7 @@ struct s_word_object
 	word_object *next;
 };
 
-static word_object *list_head[2];
+static word_object *list_heads[2];
 
 /* Add object to list */
 static void add_to_list(word_object **list_head, uint16_t value) 
@@ -99,30 +98,32 @@ static int Update_Analog_Input_Read_Property(BACNET_READ_PROPERTY_DATA *rpdata)
 {
 	static int index;
 	word_object *object;
-	int instance_no = Analog_Input_Instance_To_Index(rpdata -> object_instance);
+	int instance_no = bacnet_Analog_Input_Instance_To_Index(rpdata -> object_instance);
 
 	if(rpdata->object_property != bacnet_PROP_PRESENT_VALUE) 
 	{
-		pthread_mutex_lock(&list_lock);
     		goto not_pv;
 	}
 
-	if(list_head[instance_no] == NULL)
+	pthread_mutex_lock(&list_lock);
+	if(list_heads[instance_no] == NULL)
 	{
 		pthread_mutex_unlock(&list_lock);
 		goto not_pv;
 	}
 	
-	object = list_get_first(&list_head[instance_no]);
+	object = list_get_first(&list_heads[instance_no]);
+	pthread_mutex_unlock(&list_lock);
+
 	printf("AI_Present_Value request for instance %i\n", instance_no);
-    	thread_display[instance_no] = object -> value;
-	
+
 	//bacnet_Analog_Input_Present_Value_Set(0, 20); // For testing and debugging purposes only
+	printf("-------------- %i:%04X\n", instance_no, object->value);
 	
+	bacnet_Analog_Input_Present_Value_Set(instance_no, object->value);
 	free(object);
-	bacnet_Analog_Input_Present_Value_Set(instance_no, thread_display[instance_no]);
 	
-	not_pv:
+not_pv:
 	return bacnet_Analog_Input_Read_Property(rpdata);
 }
 
@@ -307,7 +308,7 @@ modbus_side_restart:
 
 		for(i = 0; i < rc; i++)  // Register display
 		{
-			add_to_list(&list_head[i], tab_reg[i]);  // replacement for printf statement
+			add_to_list(&list_heads[i], tab_reg[i]);  // replacement for printf statement
 			printf("register[%d] = %d (0x%X)\n", i, tab_reg[i], tab_reg[i]);
 		}	
 		usleep(100000);  // Sleep for suggested delay time of 100ms
